@@ -1,6 +1,14 @@
 import "./style.css";
 
-type Tool = "select" | "mosaic" | "ellipse" | "line" | "arrow" | "freehand";
+type Tool =
+  | "select"
+  | "mosaic"
+  | "ellipse"
+  | "line"
+  | "arrow"
+  | "freehand"
+  | "text"
+  | "number";
 type Point = { x: number; y: number };
 type BaseAnnotation = { id: string };
 type MosaicAnnotation = BaseAnnotation & {
@@ -24,7 +32,30 @@ type FreehandAnnotation = BaseAnnotation & {
   color: string;
   lineWidth: number;
 };
-type Annotation = MosaicAnnotation | ShapeAnnotation | FreehandAnnotation;
+type TextAnnotation = BaseAnnotation & {
+  type: "text";
+  position: Point;
+  content: string;
+  color: string;
+  fontSize: number;
+};
+type NumberAnnotation = BaseAnnotation & {
+  type: "number";
+  position: Point;
+  value: number;
+  color: string;
+  size: number;
+};
+type Annotation =
+  | MosaicAnnotation
+  | ShapeAnnotation
+  | FreehandAnnotation
+  | TextAnnotation
+  | NumberAnnotation;
+
+const TEXT_FONT_FAMILY = '"Hiragino Sans", "Yu Gothic UI", "Yu Gothic", sans-serif';
+const measureCanvas = document.createElement("canvas");
+const measureContext = measureCanvas.getContext("2d")!;
 
 const icons = {
   image: `<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="8.5" cy="9" r="1.5"/><path d="m4 17 5-5 4 4 2-2 5 5"/></svg>`,
@@ -38,6 +69,8 @@ const icons = {
   line: `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20 20 4"/></svg>`,
   arrow: `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20 20 4"/><path d="M11 4h9v9"/></svg>`,
   freehand: `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 17c3-8 5 3 8-5s4 5 10-4"/></svg>`,
+  text: `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 5h14M12 5v14M8.5 19h7"/></svg>`,
+  number: `<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M10.5 9.5 12.5 8v8M10.5 16h4"/></svg>`,
   fit: `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 3H3v5M16 3h5v5M8 21H3v-5M16 21h5v-5"/></svg>`,
   zoomIn: `<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 5 5M10.5 7v7M7 10.5h7"/></svg>`,
   zoomOut: `<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 5 5M7 10.5h7"/></svg>`,
@@ -79,6 +112,8 @@ document.querySelector<HTMLDivElement>("#app")!.innerHTML = `
       ${toolButton("line", "直線", "L", icons.line)}
       ${toolButton("arrow", "矢印", "A", icons.arrow)}
       ${toolButton("freehand", "手描き", "P", icons.freehand)}
+      ${toolButton("text", "テキスト", "T", icons.text)}
+      ${toolButton("number", "番号", "N", icons.number)}
     </aside>
 
     <section class="workspace" id="workspace">
@@ -96,16 +131,36 @@ document.querySelector<HTMLDivElement>("#app")!.innerHTML = `
           <p class="privacy">画像は外部へ送信されません。すべてこの端末内で処理されます。</p>
         </div>
       </div>
+      <div class="inline-text-editor hidden" id="inlineTextEditor">
+        <textarea id="textEditorInput" rows="1" aria-label="テキストを入力" placeholder="テキストを入力"></textarea>
+        <span>Enterで確定・Shift＋Enterで改行・Escでキャンセル</span>
+      </div>
     </section>
 
     <aside class="settings-panel">
       <h2 class="panel-title">描画設定</h2>
       <div class="setting">
-        <label class="setting-label" for="colorInput">線の色</label>
+        <label class="setting-label" for="colorInput">描画色</label>
         <div class="color-row">
           <input id="colorInput" type="color" value="#ef4444" />
-          <input class="color-text" id="colorText" type="text" value="#EF4444" maxlength="7" aria-label="線の色コード" />
+          <input class="color-text" id="colorText" type="text" value="#EF4444" maxlength="7" aria-label="描画色コード" />
         </div>
+      </div>
+      <div class="setting">
+        <label class="setting-label" for="textSizeInput">
+          <span>文字サイズ</span><span class="value-badge" id="textSizeValue">40 px</span>
+        </label>
+        <input id="textSizeInput" type="range" min="16" max="120" step="2" value="40" />
+        <p class="setting-hint">テキストツールで入力する文字の大きさです。</p>
+      </div>
+      <div class="setting">
+        <label class="setting-label" for="numberSizeSelect">番号サイズ</label>
+        <select class="select" id="numberSizeSelect">
+          <option value="72">小</option>
+          <option value="96" selected>中（おすすめ）</option>
+          <option value="128">大</option>
+        </select>
+        <p class="setting-hint">目立ちやすいように、「小」でも十分大きく表示します。</p>
       </div>
       <div class="setting">
         <label class="setting-label" for="lineWidthInput">
@@ -153,6 +208,7 @@ function toolButton(tool: Tool, label: string, shortcut: string, icon: string): 
 
 const canvas = getElement<HTMLCanvasElement>("editorCanvas");
 const ctx = canvas.getContext("2d", { alpha: true })!;
+const workspace = getElement<HTMLElement>("workspace");
 const canvasScroller = getElement<HTMLDivElement>("canvasScroller");
 const emptyState = getElement<HTMLDivElement>("emptyState");
 const dropCard = getElement<HTMLDivElement>("dropCard");
@@ -168,6 +224,9 @@ const fitButton = getElement<HTMLButtonElement>("fitButton");
 const zoomLabel = getElement<HTMLSpanElement>("zoomLabel");
 const colorInput = getElement<HTMLInputElement>("colorInput");
 const colorText = getElement<HTMLInputElement>("colorText");
+const textSizeInput = getElement<HTMLInputElement>("textSizeInput");
+const textSizeValue = getElement<HTMLSpanElement>("textSizeValue");
+const numberSizeSelect = getElement<HTMLSelectElement>("numberSizeSelect");
 const lineWidthInput = getElement<HTMLInputElement>("lineWidthInput");
 const lineWidthValue = getElement<HTMLSpanElement>("lineWidthValue");
 const mosaicInput = getElement<HTMLInputElement>("mosaicInput");
@@ -179,6 +238,8 @@ const qualityValue = getElement<HTMLSpanElement>("qualityValue");
 const statusMessage = getElement<HTMLSpanElement>("statusMessage");
 const statusMeta = getElement<HTMLSpanElement>("statusMeta");
 const toast = getElement<HTMLDivElement>("toast");
+const inlineTextEditor = getElement<HTMLDivElement>("inlineTextEditor");
+const textEditorInput = getElement<HTMLTextAreaElement>("textEditorInput");
 
 let sourceImage: HTMLImageElement | null = null;
 let sourceFileName = "image";
@@ -199,6 +260,14 @@ let panning:
   | null = null;
 let renderPending = false;
 let toastTimer = 0;
+let textEditSession:
+  | {
+      annotationId: string | null;
+      position: Point;
+      color: string;
+      fontSize: number;
+    }
+  | null = null;
 
 function getElement<T extends HTMLElement>(id: string): T {
   const element = document.getElementById(id);
@@ -215,6 +284,7 @@ function uuid(): string {
 }
 
 function setTool(tool: Tool): void {
+  if (textEditSession) commitTextEditing();
   currentTool = tool;
   selectedId = null;
   canvas.dataset.tool = tool;
@@ -260,6 +330,10 @@ function drawAnnotation(
   target.save();
   if (annotation.type === "mosaic") {
     drawMosaic(target, annotation, image);
+  } else if (annotation.type === "text") {
+    drawText(target, annotation);
+  } else if (annotation.type === "number") {
+    drawNumber(target, annotation);
   } else if (annotation.type === "freehand") {
     if (annotation.points.length > 1) {
       target.strokeStyle = annotation.color;
@@ -293,6 +367,54 @@ function drawAnnotation(
     }
   }
   target.restore();
+}
+
+function textLines(content: string): string[] {
+  return content.replace(/\r\n?/g, "\n").split("\n");
+}
+
+function textLineHeight(fontSize: number): number {
+  return fontSize * 1.25;
+}
+
+function textOutlineWidth(fontSize: number): number {
+  return Math.max(3, fontSize * 0.12);
+}
+
+function applyTextFont(target: CanvasRenderingContext2D, fontSize: number): void {
+  target.font = `700 ${fontSize}px ${TEXT_FONT_FAMILY}`;
+  target.textBaseline = "top";
+  target.textAlign = "left";
+}
+
+function drawText(target: CanvasRenderingContext2D, annotation: TextAnnotation): void {
+  applyTextFont(target, annotation.fontSize);
+  target.lineJoin = "round";
+  target.strokeStyle = "#ffffff";
+  target.lineWidth = textOutlineWidth(annotation.fontSize);
+  target.fillStyle = annotation.color;
+  const lineHeight = textLineHeight(annotation.fontSize);
+  textLines(annotation.content).forEach((line, index) => {
+    const y = annotation.position.y + index * lineHeight;
+    target.strokeText(line, annotation.position.x, y);
+    target.fillText(line, annotation.position.x, y);
+  });
+}
+
+function drawNumber(target: CanvasRenderingContext2D, annotation: NumberAnnotation): void {
+  const radius = annotation.size / 2;
+  target.fillStyle = annotation.color;
+  target.beginPath();
+  target.arc(annotation.position.x, annotation.position.y, radius, 0, Math.PI * 2);
+  target.fill();
+
+  const digits = String(annotation.value).length;
+  const fontScale = digits >= 3 ? 0.4 : digits === 2 ? 0.48 : 0.58;
+  target.font = `700 ${annotation.size * fontScale}px ${TEXT_FONT_FAMILY}`;
+  target.fillStyle = "#ffffff";
+  target.textAlign = "center";
+  target.textBaseline = "middle";
+  target.fillText(String(annotation.value), annotation.position.x, annotation.position.y + 0.5);
 }
 
 function drawMosaic(
@@ -381,6 +503,26 @@ function annotationBounds(annotation: Annotation) {
   if (annotation.type === "mosaic") {
     return normalizeRect(annotation.x, annotation.y, annotation.width, annotation.height);
   }
+  if (annotation.type === "text") {
+    applyTextFont(measureContext, annotation.fontSize);
+    const lines = textLines(annotation.content);
+    const outline = textOutlineWidth(annotation.fontSize) / 2;
+    const width = Math.max(1, ...lines.map((line) => measureContext.measureText(line).width));
+    return {
+      x: annotation.position.x - outline,
+      y: annotation.position.y - outline,
+      width: width + outline * 2,
+      height: lines.length * textLineHeight(annotation.fontSize) + outline * 2,
+    };
+  }
+  if (annotation.type === "number") {
+    return {
+      x: annotation.position.x - annotation.size / 2,
+      y: annotation.position.y - annotation.size / 2,
+      width: annotation.size,
+      height: annotation.size,
+    };
+  }
   if (annotation.type === "freehand") {
     const xs = annotation.points.map((point) => point.x);
     const ys = annotation.points.map((point) => point.y);
@@ -403,7 +545,7 @@ function annotationBounds(annotation: Annotation) {
   };
 }
 
-function pointerToImage(event: PointerEvent): Point {
+function pointerToImage(event: Pick<MouseEvent, "clientX" | "clientY">): Point {
   const rect = canvas.getBoundingClientRect();
   return {
     x: clamp((event.clientX - rect.left) / zoom, 0, canvas.width),
@@ -422,6 +564,15 @@ function hitTest(point: Point): Annotation | null {
     if (annotation.type === "mosaic") {
       const box = annotationBounds(annotation);
       if (pointInBox(point, box, tolerance)) return annotation;
+    } else if (annotation.type === "text") {
+      if (pointInBox(point, annotationBounds(annotation), tolerance)) return annotation;
+    } else if (annotation.type === "number") {
+      if (
+        Math.hypot(point.x - annotation.position.x, point.y - annotation.position.y) <=
+        annotation.size / 2 + tolerance
+      ) {
+        return annotation;
+      }
     } else if (annotation.type === "ellipse") {
       const centerX = (annotation.start.x + annotation.end.x) / 2;
       const centerY = (annotation.start.y + annotation.end.y) / 2;
@@ -519,7 +670,7 @@ function updateDraft(draft: Annotation, point: Point, start: Point): void {
     if (Math.hypot(point.x - last.x, point.y - last.y) >= 1.5 / zoom) {
       draft.points.push(point);
     }
-  } else {
+  } else if (draft.type === "ellipse" || draft.type === "line" || draft.type === "arrow") {
     draft.end = point;
   }
 }
@@ -535,6 +686,9 @@ function moveAnnotation(annotation: Annotation, dx: number, dy: number): Annotat
   if (moved.type === "mosaic") {
     moved.x += dx;
     moved.y += dy;
+  } else if (moved.type === "text" || moved.type === "number") {
+    moved.position.x += dx;
+    moved.position.y += dy;
   } else if (moved.type === "freehand") {
     moved.points = moved.points.map((point) => ({ x: point.x + dx, y: point.y + dy }));
   } else {
@@ -586,6 +740,124 @@ function deleteSelected(): void {
   showToast("選択した要素を削除しました");
 }
 
+function nextNumberValue(): number {
+  const usedNumbers = annotations
+    .filter((annotation): annotation is NumberAnnotation => annotation.type === "number")
+    .map((annotation) => annotation.value);
+  return usedNumbers.length === 0 ? 1 : Math.max(...usedNumbers) + 1;
+}
+
+function addNumberAnnotation(position: Point): void {
+  const previous = cloneAnnotations();
+  const annotation: NumberAnnotation = {
+    id: uuid(),
+    type: "number",
+    position,
+    value: nextNumberValue(),
+    color: colorInput.value,
+    size: Number(numberSizeSelect.value),
+  };
+  annotations.push(annotation);
+  selectedId = annotation.id;
+  commitChange(previous);
+  statusMessage.textContent = `番号${annotation.value}を追加しました`;
+  scheduleRender();
+}
+
+function resizeTextEditor(): void {
+  textEditorInput.style.height = "auto";
+  textEditorInput.style.height = `${clamp(textEditorInput.scrollHeight, 44, 180)}px`;
+  requestAnimationFrame(positionTextEditor);
+}
+
+function positionTextEditor(): void {
+  if (!textEditSession || inlineTextEditor.classList.contains("hidden")) return;
+  const canvasRect = canvas.getBoundingClientRect();
+  const workspaceRect = workspace.getBoundingClientRect();
+  const xScale = canvasRect.width / canvas.width;
+  const yScale = canvasRect.height / canvas.height;
+  const anchorLeft = canvasRect.left - workspaceRect.left + textEditSession.position.x * xScale;
+  const anchorTop = canvasRect.top - workspaceRect.top + textEditSession.position.y * yScale;
+  const editorWidth = Math.min(360, Math.max(220, workspace.clientWidth - 32));
+  const editorHeight = inlineTextEditor.offsetHeight || 104;
+  const left = clamp(anchorLeft, 8, Math.max(8, workspace.clientWidth - editorWidth - 8));
+  const top = clamp(anchorTop, 8, Math.max(8, workspace.clientHeight - editorHeight - 8));
+  inlineTextEditor.style.left = `${left}px`;
+  inlineTextEditor.style.top = `${top}px`;
+  inlineTextEditor.style.width = `${editorWidth}px`;
+  textEditorInput.style.fontSize = `${clamp(textEditSession.fontSize * zoom, 16, 72)}px`;
+  textEditorInput.style.color = textEditSession.color;
+}
+
+function startTextEditing(position: Point, annotation?: TextAnnotation): void {
+  if (textEditSession) commitTextEditing();
+  textEditSession = {
+    annotationId: annotation?.id ?? null,
+    position: annotation?.position ?? position,
+    color: annotation?.color ?? colorInput.value,
+    fontSize: annotation?.fontSize ?? Number(textSizeInput.value),
+  };
+  textEditorInput.value = annotation?.content ?? "";
+  inlineTextEditor.classList.remove("hidden");
+  resizeTextEditor();
+  positionTextEditor();
+  requestAnimationFrame(() => {
+    positionTextEditor();
+    textEditorInput.focus();
+    if (annotation) textEditorInput.select();
+  });
+}
+
+function cancelTextEditing(): void {
+  textEditSession = null;
+  textEditorInput.value = "";
+  inlineTextEditor.classList.add("hidden");
+}
+
+function commitTextEditing(): void {
+  if (!textEditSession) return;
+  const session = textEditSession;
+  const content = textEditorInput.value.replace(/\r\n?/g, "\n").trim();
+  textEditSession = null;
+  inlineTextEditor.classList.add("hidden");
+  textEditorInput.value = "";
+
+  if (session.annotationId) {
+    const index = annotations.findIndex((annotation) => annotation.id === session.annotationId);
+    if (index < 0 || annotations[index].type !== "text") return;
+    const existing = annotations[index] as TextAnnotation;
+    if (content === existing.content) return;
+    const previous = cloneAnnotations();
+    if (content) {
+      annotations[index] = { ...existing, content };
+      statusMessage.textContent = "テキストを更新しました";
+    } else {
+      annotations.splice(index, 1);
+      selectedId = null;
+      statusMessage.textContent = "空のテキストを削除しました";
+    }
+    commitChange(previous);
+    scheduleRender();
+    return;
+  }
+
+  if (!content) return;
+  const previous = cloneAnnotations();
+  const annotation: TextAnnotation = {
+    id: uuid(),
+    type: "text",
+    position: session.position,
+    content,
+    color: session.color,
+    fontSize: session.fontSize,
+  };
+  annotations.push(annotation);
+  selectedId = annotation.id;
+  commitChange(previous);
+  statusMessage.textContent = "テキストを追加しました";
+  scheduleRender();
+}
+
 function updateControls(): void {
   const hasImage = Boolean(sourceImage);
   undoButton.disabled = undoStack.length === 0;
@@ -605,6 +877,7 @@ function updateControls(): void {
 }
 
 async function openFile(file: File): Promise<void> {
+  if (textEditSession) commitTextEditing();
   if (!file.type.startsWith("image/")) {
     showToast("PNG、JPEG、WebP画像を選択してください", true);
     return;
@@ -661,6 +934,7 @@ function setZoom(nextZoom: number): void {
   requestAnimationFrame(() => {
     canvasScroller.scrollLeft = centerX * ratio - canvasScroller.clientWidth / 2;
     canvasScroller.scrollTop = centerY * ratio - canvasScroller.clientHeight / 2;
+    positionTextEditor();
   });
   updateControls();
   scheduleRender();
@@ -676,6 +950,7 @@ function fitToScreen(): void {
   canvas.style.height = `${canvas.height * zoom}px`;
   canvasScroller.scrollLeft = 0;
   canvasScroller.scrollTop = 0;
+  positionTextEditor();
   updateControls();
   scheduleRender();
 }
@@ -763,6 +1038,17 @@ canvas.addEventListener("pointerdown", (event) => {
     scheduleRender();
     return;
   }
+  if (currentTool === "text") {
+    selectedId = null;
+    startTextEditing(point);
+    updateControls();
+    scheduleRender();
+    return;
+  }
+  if (currentTool === "number") {
+    addNumberAnnotation(point);
+    return;
+  }
   const draft = createDraft(point);
   interaction = { mode: "draw", start: point, draft };
   canvas.setPointerCapture(event.pointerId);
@@ -835,6 +1121,17 @@ canvas.addEventListener("pointercancel", () => {
   scheduleRender();
 });
 
+canvas.addEventListener("dblclick", (event) => {
+  if (!sourceImage || currentTool !== "select" || event.button !== 0) return;
+  const hit = hitTest(pointerToImage(event));
+  if (hit?.type !== "text") return;
+  event.preventDefault();
+  selectedId = hit.id;
+  updateControls();
+  scheduleRender();
+  startTextEditing(hit.position, hit);
+});
+
 canvas.addEventListener(
   "wheel",
   (event) => {
@@ -877,6 +1174,9 @@ colorText.addEventListener("change", () => {
     showToast("色は #EF4444 の形式で入力してください", true);
   }
 });
+textSizeInput.addEventListener("input", () => {
+  textSizeValue.textContent = `${textSizeInput.value} px`;
+});
 lineWidthInput.addEventListener("input", () => {
   lineWidthValue.textContent = `${lineWidthInput.value} px`;
 });
@@ -889,6 +1189,22 @@ formatSelect.addEventListener("change", () => {
 qualityInput.addEventListener("input", () => {
   qualityValue.textContent = `${qualityInput.value}%`;
 });
+
+textEditorInput.addEventListener("input", resizeTextEditor);
+textEditorInput.addEventListener("keydown", (event) => {
+  if (event.isComposing) return;
+  if (event.key === "Escape") {
+    event.preventDefault();
+    cancelTextEditing();
+  } else if (event.key === "Enter" && !event.shiftKey) {
+    event.preventDefault();
+    commitTextEditing();
+  }
+});
+textEditorInput.addEventListener("blur", () => {
+  if (textEditSession) commitTextEditing();
+});
+canvasScroller.addEventListener("scroll", positionTextEditor, { passive: true });
 
 for (const eventName of ["dragenter", "dragover"]) {
   window.addEventListener(eventName, (event) => {
@@ -908,6 +1224,7 @@ window.addEventListener("drop", (event) => {
 });
 
 window.addEventListener("paste", (event) => {
+  if ((event.target as HTMLElement).matches("input, textarea")) return;
   const item = Array.from(event.clipboardData?.items ?? []).find((entry) =>
     entry.type.startsWith("image/"),
   );
@@ -949,6 +1266,8 @@ window.addEventListener("keydown", (event) => {
       l: "line",
       a: "arrow",
       p: "freehand",
+      t: "text",
+      n: "number",
     };
     const tool = shortcuts[event.key.toLowerCase()];
     if (tool) setTool(tool);
@@ -970,6 +1289,7 @@ window.addEventListener("beforeunload", (event) => {
 
 window.addEventListener("resize", () => {
   if (sourceImage && zoom < 1) updateControls();
+  positionTextEditor();
 });
 
 setTool("select");

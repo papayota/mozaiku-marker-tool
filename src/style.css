@@ -34,7 +34,8 @@ body {
 
 button,
 input,
-select {
+select,
+textarea {
   font: inherit;
 }
 
@@ -47,7 +48,8 @@ input[type="range"] {
 
 button:focus-visible,
 select:focus-visible,
-input:focus-visible {
+input:focus-visible,
+textarea:focus-visible {
   outline: 3px solid #93c5fd;
   outline-offset: 2px;
 }
@@ -176,6 +178,7 @@ input:focus-visible {
   grid-area: tools;
   display: flex;
   flex-direction: column;
+  overflow-y: auto;
   gap: 7px;
   padding: 12px 9px;
   background: var(--panel);
@@ -358,8 +361,48 @@ input[type="range"] {
 #editorCanvas[data-tool="ellipse"],
 #editorCanvas[data-tool="line"],
 #editorCanvas[data-tool="arrow"],
-#editorCanvas[data-tool="freehand"] {
+#editorCanvas[data-tool="freehand"],
+#editorCanvas[data-tool="number"] {
   cursor: crosshair;
+}
+
+#editorCanvas[data-tool="text"] {
+  cursor: text;
+}
+
+.inline-text-editor {
+  position: absolute;
+  z-index: 30;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px;
+  background: rgb(255 255 255 / 97%);
+  border: 2px solid var(--blue);
+  border-radius: 9px;
+  box-shadow: 0 8px 24px rgb(23 32 51 / 24%);
+}
+
+.inline-text-editor textarea {
+  width: 100%;
+  min-height: 44px;
+  max-height: 180px;
+  padding: 7px 9px;
+  overflow-y: auto;
+  color: #172033;
+  font-family: "Hiragino Sans", "Yu Gothic UI", "Yu Gothic", sans-serif;
+  font-weight: 700;
+  line-height: 1.25;
+  resize: none;
+  background: white;
+  border: 1px solid #b9c7da;
+  border-radius: 6px;
+}
+
+.inline-text-editor span {
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.4;
 }
 
 .empty-state {
