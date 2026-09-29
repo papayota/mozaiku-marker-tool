@@ -2,6 +2,7 @@ import "./style.css";
 
 type Tool =
   | "select"
+  | "crop"
   | "mosaic"
   | "ellipse"
   | "line"
@@ -10,6 +11,9 @@ type Tool =
   | "text"
   | "number";
 type Point = { x: number; y: number };
+type Rect = Point & { width: number; height: number };
+type EditorState = { annotations: Annotation[]; bounds: Rect };
+type CropHandle = { x: 0 | 0.5 | 1; y: 0 | 0.5 | 1 };
 type BaseAnnotation = { id: string };
 type MosaicAnnotation = BaseAnnotation & {
   type: "mosaic";
@@ -64,6 +68,7 @@ const icons = {
   redo: `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m15 7 5 5-5 5"/><path d="M19 12h-8a6 6 0 0 0-6 6"/></svg>`,
   download: `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M4 20h16"/></svg>`,
   select: `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m5 3 13 9-6 2-3 6z"/></svg>`,
+  crop: `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 3v14h14M3 7h14v14"/></svg>`,
   mosaic: `<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="8" height="8"/><rect x="13" y="3" width="8" height="8"/><rect x="3" y="13" width="8" height="8"/><rect x="13" y="13" width="8" height="8"/></svg>`,
   ellipse: `<svg viewBox="0 0 24 24" aria-hidden="true"><ellipse cx="12" cy="12" rx="9" ry="7"/></svg>`,
   line: `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20 20 4"/></svg>`,
@@ -107,6 +112,7 @@ document.querySelector<HTMLDivElement>("#app")!.innerHTML = `
 
     <aside class="tools-panel" aria-label="描画ツール">
       ${toolButton("select", "選択", "V", icons.select)}
+      ${toolButton("crop", "トリミング", "C", icons.crop)}
       ${toolButton("mosaic", "モザイク", "M", icons.mosaic)}
       ${toolButton("ellipse", "赤丸", "E", icons.ellipse)}
       ${toolButton("line", "直線", "L", icons.line)}
@@ -119,7 +125,7 @@ document.querySelector<HTMLDivElement>("#app")!.innerHTML = `
     <section class="workspace" id="workspace">
       <div class="canvas-scroller" id="canvasScroller">
         <div class="canvas-stage" id="canvasStage">
-          <canvas id="editorCanvas" class="hidden" aria-label="画像編集キャンバス"></canvas>
+          <canvas id="editorCanvas" class="hidden" tabindex="0" aria-label="画像編集キャンバス"></canvas>
         </div>
       </div>
       <div class="empty-state" id="emptyState">
@@ -138,42 +144,60 @@ document.querySelector<HTMLDivElement>("#app")!.innerHTML = `
     </section>
 
     <aside class="settings-panel">
-      <h2 class="panel-title">描画設定</h2>
-      <div class="setting">
-        <label class="setting-label" for="colorInput">描画色</label>
-        <div class="color-row">
-          <input id="colorInput" type="color" value="#ef4444" />
-          <input class="color-text" id="colorText" type="text" value="#EF4444" maxlength="7" aria-label="描画色コード" />
+      <section class="crop-settings hidden" id="cropSettings" aria-labelledby="cropTitle">
+        <h2 class="panel-title" id="cropTitle">トリミング</h2>
+        <p class="crop-help" id="cropHelp">残す範囲をドラッグで選択。枠の内側で移動、端のハンドルでサイズを調整できます。</p>
+        <div class="crop-fields" aria-describedby="cropHelp">
+          <label>左から（px）<input id="cropX" type="number" min="0" step="1" /></label>
+          <label>上から（px）<input id="cropY" type="number" min="0" step="1" /></label>
+          <label>幅（px）<input id="cropWidth" type="number" min="1" step="1" /></label>
+          <label>高さ（px）<input id="cropHeight" type="number" min="1" step="1" /></label>
         </div>
-      </div>
-      <div class="setting">
-        <label class="setting-label" for="textSizeInput">
-          <span>文字サイズ</span><span class="value-badge" id="textSizeValue">40 px</span>
-        </label>
-        <input id="textSizeInput" type="range" min="16" max="120" step="2" value="40" />
-        <p class="setting-hint">テキストツールで入力する文字の大きさです。</p>
-      </div>
-      <div class="setting">
-        <label class="setting-label" for="numberSizeSelect">番号サイズ</label>
-        <select class="select" id="numberSizeSelect">
-          <option value="72">小</option>
-          <option value="96" selected>中（おすすめ）</option>
-          <option value="128">大</option>
-        </select>
-        <p class="setting-hint">目立ちやすいように、「小」でも十分大きく表示します。</p>
-      </div>
-      <div class="setting">
-        <label class="setting-label" for="lineWidthInput">
-          <span>線の太さ</span><span class="value-badge" id="lineWidthValue">8 px</span>
-        </label>
-        <input id="lineWidthInput" type="range" min="2" max="40" value="8" />
-      </div>
-      <div class="setting">
-        <label class="setting-label" for="mosaicInput">
-          <span>モザイクの粗さ</span><span class="value-badge" id="mosaicValue">16 px</span>
-        </label>
-        <input id="mosaicInput" type="range" min="4" max="64" step="2" value="16" />
-        <p class="setting-hint">値を大きくするとモザイクが粗くなります。</p>
+        <p class="crop-help" id="cropSummary" role="status"></p>
+        <div class="crop-actions">
+          <button class="btn primary" id="applyCropButton" disabled>切り抜く</button>
+          <button class="btn" id="cancelCropButton">キャンセル</button>
+        </div>
+        <p class="setting-hint">数値でも範囲を指定できます。Enterで確定・Escでキャンセル。確定後も「元に戻す」で復元できます。</p>
+      </section>
+      <div id="drawingSettings">
+        <h2 class="panel-title">描画設定</h2>
+        <div class="setting">
+          <label class="setting-label" for="colorInput">描画色</label>
+          <div class="color-row">
+            <input id="colorInput" type="color" value="#ef4444" />
+            <input class="color-text" id="colorText" type="text" value="#EF4444" maxlength="7" aria-label="描画色コード" />
+          </div>
+        </div>
+        <div class="setting">
+          <label class="setting-label" for="textSizeInput">
+            <span>文字サイズ</span><span class="value-badge" id="textSizeValue">40 px</span>
+          </label>
+          <input id="textSizeInput" type="range" min="16" max="120" step="2" value="40" />
+          <p class="setting-hint">テキストツールで入力する文字の大きさです。</p>
+        </div>
+        <div class="setting">
+          <label class="setting-label" for="numberSizeSelect">番号サイズ</label>
+          <select class="select" id="numberSizeSelect">
+            <option value="72">小</option>
+            <option value="96" selected>中（おすすめ）</option>
+            <option value="128">大</option>
+          </select>
+          <p class="setting-hint">目立ちやすいように、「小」でも十分大きく表示します。</p>
+        </div>
+        <div class="setting">
+          <label class="setting-label" for="lineWidthInput">
+            <span>線の太さ</span><span class="value-badge" id="lineWidthValue">8 px</span>
+          </label>
+          <input id="lineWidthInput" type="range" min="2" max="40" value="8" />
+        </div>
+        <div class="setting">
+          <label class="setting-label" for="mosaicInput">
+            <span>モザイクの粗さ</span><span class="value-badge" id="mosaicValue">16 px</span>
+          </label>
+          <input id="mosaicInput" type="range" min="4" max="64" step="2" value="16" />
+          <p class="setting-hint">値を大きくするとモザイクが粗くなります。</p>
+        </div>
       </div>
       <div class="setting">
         <label class="setting-label" for="formatSelect">保存形式</label>
@@ -240,12 +264,36 @@ const statusMeta = getElement<HTMLSpanElement>("statusMeta");
 const toast = getElement<HTMLDivElement>("toast");
 const inlineTextEditor = getElement<HTMLDivElement>("inlineTextEditor");
 const textEditorInput = getElement<HTMLTextAreaElement>("textEditorInput");
+const cropSettings = getElement<HTMLElement>("cropSettings");
+const drawingSettings = getElement<HTMLDivElement>("drawingSettings");
+const applyCropButton = getElement<HTMLButtonElement>("applyCropButton");
+const cancelCropButton = getElement<HTMLButtonElement>("cancelCropButton");
+const cropSummary = getElement<HTMLParagraphElement>("cropSummary");
+const cropInputs = ["cropX", "cropY", "cropWidth", "cropHeight"].map((id) =>
+  getElement<HTMLInputElement>(id),
+);
 
 let sourceImage: HTMLImageElement | null = null;
+// Keep all annotations in original-image coordinates. Cropping only changes the
+// viewport, so mosaic sampling and editable elements survive repeated crops.
+let imageBounds: Rect = { x: 0, y: 0, width: 0, height: 0 };
+let cropRect: Rect | null = null;
+let cropDrag: {
+  pointerId: number;
+  start: Point;
+  previous: Rect;
+  mode: "new" | "move" | "resize";
+  handle?: CropHandle;
+} | null = null;
+const cropHandles: CropHandle[] = [
+  { x: 0, y: 0 }, { x: 0.5, y: 0 }, { x: 1, y: 0 },
+  { x: 0, y: 0.5 }, { x: 1, y: 0.5 },
+  { x: 0, y: 1 }, { x: 0.5, y: 1 }, { x: 1, y: 1 },
+];
 let sourceFileName = "image";
 let annotations: Annotation[] = [];
-let undoStack: Annotation[][] = [];
-let redoStack: Annotation[][] = [];
+let undoStack: EditorState[] = [];
+let redoStack: EditorState[] = [];
 let currentTool: Tool = "select";
 let selectedId: string | null = null;
 let zoom = 1;
@@ -284,7 +332,10 @@ function uuid(): string {
 }
 
 function setTool(tool: Tool): void {
+  if (tool === "crop" && !sourceImage) return;
   if (textEditSession) commitTextEditing();
+  cancelInteraction();
+  cropRect = tool === "crop" ? cropRect ?? { ...imageBounds } : null;
   currentTool = tool;
   selectedId = null;
   canvas.dataset.tool = tool;
@@ -293,6 +344,12 @@ function setTool(tool: Tool): void {
     button.classList.toggle("active", active);
     button.setAttribute("aria-pressed", String(active));
   });
+  cropSettings.classList.toggle("hidden", tool !== "crop");
+  drawingSettings.classList.toggle("hidden", tool === "crop");
+  if (tool === "crop") {
+    statusMessage.textContent = "残す範囲を選択し、「切り抜く」で確定してください";
+    updateCropControls();
+  }
   updateControls();
   scheduleRender();
 }
@@ -306,9 +363,153 @@ function scheduleRender(): void {
   });
 }
 
+function cancelInteraction(): void {
+  if (interaction?.mode === "move") {
+    const moving = interaction;
+    const index = annotations.findIndex((item) => item.id === moving.id);
+    if (index >= 0) annotations[index] = moving.original;
+  }
+  if (cropDrag) {
+    cropRect = cropDrag.previous;
+    const pointerId = cropDrag.pointerId;
+    cropDrag = null;
+    if (canvas.hasPointerCapture(pointerId)) canvas.releasePointerCapture(pointerId);
+  }
+  interaction = null;
+  panning = null;
+  canvas.style.cursor = "";
+}
+
+function updateCropControls(): void {
+  if (!cropRect) return;
+  const values = [cropRect.x - imageBounds.x, cropRect.y - imageBounds.y, cropRect.width, cropRect.height];
+  const limits = [imageBounds.width - 1, imageBounds.height - 1, imageBounds.width, imageBounds.height];
+  cropInputs.forEach((input, index) => {
+    input.value = String(values[index]);
+    input.max = String(limits[index]);
+    input.disabled = Boolean(cropDrag);
+    input.removeAttribute("aria-invalid");
+  });
+  applyCropButton.disabled = Boolean(cropDrag) || cropRect.width < 1 || cropRect.height < 1 ||
+    (cropRect.width === imageBounds.width && cropRect.height === imageBounds.height);
+  cropSummary.textContent = cropRect.width > 0 && cropRect.height > 0
+    ? `切り抜き後：${cropRect.width} × ${cropRect.height} px`
+    : "幅と高さが1 px以上になるよう範囲を選択してください。";
+}
+
+function readCropInputs(): boolean {
+  if (!cropRect || cropDrag) return false;
+  const [x, y, width, height] = cropInputs.map((input) => input.valueAsNumber);
+  // Validate the complete rectangle together so fields can be edited in any order.
+  const valid = [x, y, width, height].every(Number.isInteger) && x >= 0 && y >= 0 &&
+    width >= 1 && height >= 1 && x + width <= imageBounds.width && y + height <= imageBounds.height;
+  applyCropButton.disabled = !valid || (width === imageBounds.width && height === imageBounds.height);
+  cropInputs.forEach((input) => input.setAttribute("aria-invalid", String(!valid)));
+  if (!valid) {
+    cropSummary.textContent = `画像（${imageBounds.width} × ${imageBounds.height} px）内の範囲を整数で指定してください。`;
+    return false;
+  }
+  cropRect = { x: imageBounds.x + x, y: imageBounds.y + y, width, height };
+  cropSummary.textContent = `切り抜き後：${width} × ${height} px`;
+  scheduleRender();
+  return true;
+}
+
+function applyCrop(): void {
+  if (!sourceImage || !readCropInputs() || !cropRect || applyCropButton.disabled) return;
+  const previousBounds = { ...imageBounds };
+  imageBounds = { ...cropRect };
+  commitChange(cloneAnnotations(), previousBounds);
+  canvas.width = imageBounds.width;
+  canvas.height = imageBounds.height;
+  setTool("select");
+  fitToScreen();
+  canvas.focus({ preventScroll: true });
+  statusMessage.textContent = `${canvas.width} × ${canvas.height} pxにトリミングしました`;
+  showToast("トリミングしました。「元に戻す」で復元できます");
+}
+
+function cancelCrop(): void {
+  setTool("select");
+  canvas.focus({ preventScroll: true });
+  statusMessage.textContent = "トリミングをキャンセルしました";
+}
+
+function drawCropOverlay(rect: Rect): void {
+  const right = imageBounds.x + imageBounds.width;
+  const bottom = imageBounds.y + imageBounds.height;
+  ctx.save();
+  ctx.fillStyle = "rgba(15, 23, 42, 0.6)";
+  ctx.fillRect(imageBounds.x, imageBounds.y, imageBounds.width, rect.y - imageBounds.y);
+  ctx.fillRect(imageBounds.x, rect.y + rect.height, imageBounds.width, bottom - rect.y - rect.height);
+  ctx.fillRect(imageBounds.x, rect.y, rect.x - imageBounds.x, rect.height);
+  ctx.fillRect(rect.x + rect.width, rect.y, right - rect.x - rect.width, rect.height);
+  ctx.strokeStyle = "#172033";
+  ctx.lineWidth = 3 / zoom;
+  ctx.strokeRect(rect.x, rect.y, rect.width, rect.height);
+  ctx.strokeStyle = "#ffffff";
+  ctx.lineWidth = 1 / zoom;
+  ctx.strokeRect(rect.x, rect.y, rect.width, rect.height);
+  ctx.beginPath();
+  for (const fraction of [1 / 3, 2 / 3]) {
+    ctx.moveTo(rect.x + rect.width * fraction, rect.y);
+    ctx.lineTo(rect.x + rect.width * fraction, rect.y + rect.height);
+    ctx.moveTo(rect.x, rect.y + rect.height * fraction);
+    ctx.lineTo(rect.x + rect.width, rect.y + rect.height * fraction);
+  }
+  ctx.strokeStyle = "rgba(255, 255, 255, 0.6)";
+  ctx.stroke();
+  const size = 9 / zoom;
+  ctx.fillStyle = "#ffffff";
+  ctx.strokeStyle = "#172033";
+  for (const handle of cropHandles) {
+    const x = rect.x + rect.width * handle.x - size / 2;
+    const y = rect.y + rect.height * handle.y - size / 2;
+    ctx.fillRect(x, y, size, size);
+    ctx.strokeRect(x, y, size, size);
+  }
+  ctx.restore();
+}
+
+function cropHandleAt(point: Point): CropHandle | undefined {
+  const rect = cropRect;
+  if (!rect) return;
+  return cropHandles.find((handle) =>
+    Math.abs(point.x - (rect.x + rect.width * handle.x)) <= 12 / zoom &&
+    Math.abs(point.y - (rect.y + rect.height * handle.y)) <= 12 / zoom,
+  );
+}
+
+function updateCropDrag(event: PointerEvent): void {
+  if (!cropDrag || cropDrag.pointerId !== event.pointerId) return;
+  const point = pointerToImage(event);
+  point.x = Math.round(point.x);
+  point.y = Math.round(point.y);
+  const { start, previous, mode, handle } = cropDrag;
+  if (mode === "move") {
+    cropRect = {
+      ...previous,
+      x: clamp(previous.x + point.x - start.x, imageBounds.x, imageBounds.x + imageBounds.width - previous.width),
+      y: clamp(previous.y + point.y - start.y, imageBounds.y, imageBounds.y + imageBounds.height - previous.height),
+    };
+  } else if (mode === "resize" && handle) {
+    const left = handle.x === 0 ? point.x : previous.x;
+    const top = handle.y === 0 ? point.y : previous.y;
+    const right = handle.x === 1 ? point.x : previous.x + previous.width;
+    const bottom = handle.y === 1 ? point.y : previous.y + previous.height;
+    cropRect = normalizeRect(left, top, right - left, bottom - top);
+  } else {
+    cropRect = normalizeRect(start.x, start.y, point.x - start.x, point.y - start.y);
+  }
+  updateCropControls();
+  scheduleRender();
+}
+
 function render(): void {
   if (!sourceImage) return;
   ctx.clearRect(0, 0, canvas.width, canvas.height);
+  ctx.save();
+  ctx.translate(-imageBounds.x, -imageBounds.y);
   ctx.drawImage(sourceImage, 0, 0);
   for (const annotation of annotations) {
     drawAnnotation(ctx, annotation, sourceImage);
@@ -320,6 +521,8 @@ function render(): void {
     const selected = annotations.find((item) => item.id === selectedId);
     if (selected) drawSelection(ctx, selected);
   }
+  if (cropRect) drawCropOverlay(cropRect);
+  ctx.restore();
 }
 
 function drawAnnotation(
@@ -548,8 +751,8 @@ function annotationBounds(annotation: Annotation) {
 function pointerToImage(event: Pick<MouseEvent, "clientX" | "clientY">): Point {
   const rect = canvas.getBoundingClientRect();
   return {
-    x: clamp((event.clientX - rect.left) / zoom, 0, canvas.width),
-    y: clamp((event.clientY - rect.top) / zoom, 0, canvas.height),
+    x: imageBounds.x + clamp((event.clientX - rect.left) * canvas.width / rect.width, 0, canvas.width),
+    y: imageBounds.y + clamp((event.clientY - rect.top) * canvas.height / rect.height, 0, canvas.height),
   };
 }
 
@@ -700,8 +903,8 @@ function moveAnnotation(annotation: Annotation, dx: number, dy: number): Annotat
   return moved;
 }
 
-function commitChange(previous: Annotation[]): void {
-  undoStack.push(previous);
+function commitChange(previous: Annotation[], previousBounds = imageBounds): void {
+  undoStack.push({ annotations: previous, bounds: { ...previousBounds } });
   if (undoStack.length > 100) undoStack.shift();
   redoStack = [];
   dirty = true;
@@ -709,25 +912,32 @@ function commitChange(previous: Annotation[]): void {
 }
 
 function undo(): void {
+  if (undoStack.length === 0) return;
+  cancelInteraction();
   const previous = undoStack.pop();
   if (!previous) return;
-  redoStack.push(cloneAnnotations());
-  annotations = previous;
-  selectedId = null;
-  dirty = true;
-  updateControls();
-  scheduleRender();
+  redoStack.push({ annotations: cloneAnnotations(), bounds: { ...imageBounds } });
+  restoreState(previous);
 }
 
 function redo(): void {
+  if (redoStack.length === 0) return;
+  cancelInteraction();
   const next = redoStack.pop();
   if (!next) return;
-  undoStack.push(cloneAnnotations());
-  annotations = next;
-  selectedId = null;
+  undoStack.push({ annotations: cloneAnnotations(), bounds: { ...imageBounds } });
+  restoreState(next);
+}
+
+function restoreState(state: EditorState): void {
+  const resized = canvas.width !== state.bounds.width || canvas.height !== state.bounds.height;
+  annotations = state.annotations;
+  imageBounds = { ...state.bounds };
+  canvas.width = imageBounds.width;
+  canvas.height = imageBounds.height;
   dirty = true;
-  updateControls();
-  scheduleRender();
+  setTool(currentTool === "crop" ? "select" : currentTool);
+  if (resized) fitToScreen();
 }
 
 function deleteSelected(): void {
@@ -776,8 +986,8 @@ function positionTextEditor(): void {
   const workspaceRect = workspace.getBoundingClientRect();
   const xScale = canvasRect.width / canvas.width;
   const yScale = canvasRect.height / canvas.height;
-  const anchorLeft = canvasRect.left - workspaceRect.left + textEditSession.position.x * xScale;
-  const anchorTop = canvasRect.top - workspaceRect.top + textEditSession.position.y * yScale;
+  const anchorLeft = canvasRect.left - workspaceRect.left + (textEditSession.position.x - imageBounds.x) * xScale;
+  const anchorTop = canvasRect.top - workspaceRect.top + (textEditSession.position.y - imageBounds.y) * yScale;
   const editorWidth = Math.min(360, Math.max(220, workspace.clientWidth - 32));
   const editorHeight = inlineTextEditor.offsetHeight || 104;
   const left = clamp(anchorLeft, 8, Math.max(8, workspace.clientWidth - editorWidth - 8));
@@ -863,14 +1073,15 @@ function updateControls(): void {
   undoButton.disabled = undoStack.length === 0;
   redoButton.disabled = redoStack.length === 0;
   deleteButton.disabled = !selectedId;
-  downloadButton.disabled = !hasImage;
+  downloadButton.disabled = !hasImage || currentTool === "crop";
+  document.querySelector<HTMLButtonElement>('[data-tool="crop"]')!.disabled = !hasImage;
   zoomOutButton.disabled = !hasImage;
   zoomInButton.disabled = !hasImage;
   zoomResetButton.disabled = !hasImage;
   fitButton.disabled = !hasImage;
   zoomLabel.textContent = `${Math.round(zoom * 100)}%`;
   if (sourceImage) {
-    statusMeta.textContent = `${sourceImage.naturalWidth} × ${sourceImage.naturalHeight}px · ${annotations.length}個の要素`;
+    statusMeta.textContent = `${imageBounds.width} × ${imageBounds.height}px · ${annotations.length}個の要素`;
   } else {
     statusMeta.textContent = "画像未選択";
   }
@@ -898,7 +1109,10 @@ async function openFile(file: File): Promise<void> {
       showToast("画像が大きすぎます。1億画素以下の画像を使用してください", true);
       return;
     }
+    cancelInteraction();
     sourceImage = image;
+    imageBounds = { x: 0, y: 0, width: image.naturalWidth, height: image.naturalHeight };
+    cropRect = null;
     sourceFileName = stripExtension(file.name || "screenshot");
     canvas.width = image.naturalWidth;
     canvas.height = image.naturalHeight;
@@ -907,6 +1121,7 @@ async function openFile(file: File): Promise<void> {
     redoStack = [];
     selectedId = null;
     dirty = false;
+    setTool(currentTool === "crop" ? "select" : currentTool);
     emptyState.classList.add("hidden");
     canvas.classList.remove("hidden");
     URL.revokeObjectURL(url);
@@ -956,14 +1171,14 @@ function fitToScreen(): void {
 }
 
 async function downloadImage(): Promise<void> {
-  if (!sourceImage) return;
+  if (!sourceImage || currentTool === "crop") return;
   downloadButton.disabled = true;
   const originalLabel = downloadButton.innerHTML;
   downloadButton.textContent = "書き出し中…";
   try {
     const output = document.createElement("canvas");
-    output.width = sourceImage.naturalWidth;
-    output.height = sourceImage.naturalHeight;
+    output.width = imageBounds.width;
+    output.height = imageBounds.height;
     const outputCtx = output.getContext("2d");
     if (!outputCtx) throw new Error("canvas");
     const format = formatSelect.value;
@@ -971,6 +1186,7 @@ async function downloadImage(): Promise<void> {
       outputCtx.fillStyle = "#ffffff";
       outputCtx.fillRect(0, 0, output.width, output.height);
     }
+    outputCtx.translate(-imageBounds.x, -imageBounds.y);
     outputCtx.drawImage(sourceImage, 0, 0);
     for (const annotation of annotations) {
       drawAnnotation(outputCtx, annotation, sourceImage);
@@ -1008,6 +1224,7 @@ function showToast(message: string, error = false): void {
 
 canvas.addEventListener("pointerdown", (event) => {
   if (!sourceImage) return;
+  if (cropDrag || interaction || panning) return;
   if (spacePressed || event.button === 1) {
     event.preventDefault();
     panning = {
@@ -1022,6 +1239,24 @@ canvas.addEventListener("pointerdown", (event) => {
   }
   if (event.button !== 0) return;
   const point = pointerToImage(event);
+  if (currentTool === "crop" && cropRect) {
+    event.preventDefault();
+    canvas.focus({ preventScroll: true });
+    point.x = Math.round(point.x);
+    point.y = Math.round(point.y);
+    const handle = cropHandleAt(point);
+    const fullImage = cropRect.width === imageBounds.width && cropRect.height === imageBounds.height;
+    cropDrag = {
+      pointerId: event.pointerId,
+      start: point,
+      previous: { ...cropRect },
+      mode: handle ? "resize" : !fullImage && pointInBox(point, cropRect, 0) ? "move" : "new",
+      handle,
+    };
+    canvas.setPointerCapture(event.pointerId);
+    updateCropDrag(event);
+    return;
+  }
   if (currentTool === "select") {
     const hit = hitTest(point);
     selectedId = hit?.id ?? null;
@@ -1056,12 +1291,25 @@ canvas.addEventListener("pointerdown", (event) => {
 });
 
 canvas.addEventListener("pointermove", (event) => {
+  if (cropDrag) {
+    updateCropDrag(event);
+    return;
+  }
   if (panning) {
     canvasScroller.scrollLeft = panning.scrollLeft - (event.clientX - panning.startX);
     canvasScroller.scrollTop = panning.scrollTop - (event.clientY - panning.startY);
     return;
   }
-  if (!interaction) return;
+  if (!interaction) {
+    if (currentTool === "crop" && cropRect) {
+      const point = pointerToImage(event);
+      const handle = cropHandleAt(point);
+      canvas.style.cursor = handle
+        ? handle.x === 0.5 ? "ns-resize" : handle.y === 0.5 ? "ew-resize" : handle.x === handle.y ? "nwse-resize" : "nesw-resize"
+        : pointInBox(point, cropRect, 0) && (cropRect.width < imageBounds.width || cropRect.height < imageBounds.height) ? "move" : "crosshair";
+    }
+    return;
+  }
   const point = pointerToImage(event);
   if (interaction.mode === "draw") {
     updateDraft(interaction.draft, point, interaction.start);
@@ -1078,6 +1326,16 @@ canvas.addEventListener("pointermove", (event) => {
 });
 
 canvas.addEventListener("pointerup", (event) => {
+  if (cropDrag) {
+    if (cropDrag.pointerId !== event.pointerId) return;
+    updateCropDrag(event);
+    if (!cropRect || cropRect.width < 1 || cropRect.height < 1) cropRect = cropDrag.previous;
+    cropDrag = null;
+    canvas.releasePointerCapture(event.pointerId);
+    updateCropControls();
+    scheduleRender();
+    return;
+  }
   if (panning) {
     panning = null;
     canvas.releasePointerCapture(event.pointerId);
@@ -1110,14 +1368,15 @@ canvas.addEventListener("pointerup", (event) => {
 });
 
 canvas.addEventListener("pointercancel", () => {
-  if (interaction?.mode === "move") {
-    const moveInteraction = interaction;
-    const index = annotations.findIndex((item) => item.id === moveInteraction.id);
-    if (index >= 0) annotations[index] = moveInteraction.original;
-  }
-  interaction = null;
-  panning = null;
-  canvas.style.cursor = "";
+  cancelInteraction();
+  updateCropControls();
+  scheduleRender();
+});
+
+canvas.addEventListener("lostpointercapture", (event) => {
+  if (cropDrag?.pointerId !== event.pointerId) return;
+  cancelInteraction();
+  updateCropControls();
   scheduleRender();
 });
 
@@ -1161,6 +1420,9 @@ zoomOutButton.addEventListener("click", () => setZoom(zoom / 1.2));
 zoomInButton.addEventListener("click", () => setZoom(zoom * 1.2));
 zoomResetButton.addEventListener("click", () => setZoom(1));
 fitButton.addEventListener("click", fitToScreen);
+applyCropButton.addEventListener("click", applyCrop);
+cancelCropButton.addEventListener("click", cancelCrop);
+cropInputs.forEach((input) => input.addEventListener("input", readCropInputs));
 
 colorInput.addEventListener("input", () => {
   colorText.value = colorInput.value.toUpperCase();
@@ -1237,6 +1499,17 @@ window.addEventListener("paste", (event) => {
 
 window.addEventListener("keydown", (event) => {
   const target = event.target as HTMLElement;
+  if (event.isComposing) return;
+  if (currentTool === "crop" && event.key === "Escape") {
+    event.preventDefault();
+    cancelCrop();
+    return;
+  }
+  if (currentTool === "crop" && event.key === "Enter" && !target.closest("button, select")) {
+    event.preventDefault();
+    applyCrop();
+    return;
+  }
   if (target.matches("input, select, textarea")) return;
   const command = event.metaKey || event.ctrlKey;
   if (command && event.key.toLowerCase() === "o") {
@@ -1253,6 +1526,7 @@ window.addEventListener("keydown", (event) => {
     event.preventDefault();
     deleteSelected();
   } else if (event.key === " ") {
+    if (target.closest("button")) return;
     event.preventDefault();
     spacePressed = true;
     if (sourceImage) canvas.style.cursor = "grab";
@@ -1261,6 +1535,7 @@ window.addEventListener("keydown", (event) => {
   } else {
     const shortcuts: Record<string, Tool> = {
       v: "select",
+      c: "crop",
       m: "mosaic",
       e: "ellipse",
       l: "line",
@@ -1270,7 +1545,7 @@ window.addEventListener("keydown", (event) => {
       n: "number",
     };
     const tool = shortcuts[event.key.toLowerCase()];
-    if (tool) setTool(tool);
+    if (tool && !command && !event.altKey) setTool(tool);
   }
 });
 

@@ -29,7 +29,7 @@ body,
 }
 
 body {
-  min-width: 900px;
+  min-width: 320px;
 }
 
 button,
@@ -187,6 +187,7 @@ textarea:focus-visible {
 }
 
 .tool-btn {
+  position: relative;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -206,9 +207,67 @@ textarea:focus-visible {
     border-color 160ms ease;
 }
 
-.tool-btn:hover {
+.tool-btn:hover:not(:disabled) {
   color: var(--blue);
   background: #eff6ff;
+}
+
+.tool-btn:disabled {
+  opacity: 0.42;
+  cursor: not-allowed;
+}
+
+.crop-settings {
+  margin-bottom: 24px;
+}
+
+.crop-help {
+  margin: 0 0 16px;
+  font-size: 12px;
+  line-height: 1.65;
+  color: var(--muted);
+}
+
+.crop-fields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.crop-fields label {
+  font-size: 12px;
+  font-weight: 650;
+  color: #39465b;
+}
+
+.crop-fields input {
+  width: 100%;
+  min-height: 44px;
+  margin-top: 6px;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: white;
+  color: #172033;
+  font-size: 16px;
+  font-variant-numeric: tabular-nums;
+}
+
+.crop-fields input[aria-invalid="true"] {
+  border-color: #b91c1c;
+}
+
+.crop-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.crop-actions .btn {
+  flex: 1;
+  min-height: 44px;
+  white-space: nowrap;
 }
 
 .tool-btn.active {
@@ -358,6 +417,7 @@ input[type="range"] {
 }
 
 #editorCanvas[data-tool="mosaic"],
+#editorCanvas[data-tool="crop"],
 #editorCanvas[data-tool="ellipse"],
 #editorCanvas[data-tool="line"],
 #editorCanvas[data-tool="arrow"],
@@ -523,6 +583,121 @@ input[type="range"] {
 
 .hidden {
   display: none !important;
+}
+
+@media (max-width: 1000px) {
+  .brand-name {
+    display: none;
+  }
+
+  .topbar {
+    gap: 6px;
+    padding-inline: 10px;
+  }
+}
+
+@media (max-width: 760px) {
+  .app-shell {
+    grid-template:
+      "header" auto
+      "tools" auto
+      "workspace" minmax(180px, 1fr)
+      "settings" minmax(0, 30%)
+      "status" 32px
+      / minmax(0, 1fr);
+    height: 100dvh;
+  }
+
+  .topbar {
+    flex-wrap: wrap;
+  }
+
+  .topbar .brand,
+  .toolbar-divider,
+  .topbar .spacer {
+    display: none;
+  }
+
+  .toolbar-group {
+    gap: 4px;
+  }
+
+  .tools-panel {
+    flex-direction: row;
+    overflow-x: auto;
+    gap: 4px;
+    padding: 6px;
+    border-right: 0;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .tool-btn {
+    flex: 0 0 64px;
+    min-height: 52px;
+  }
+
+  .settings-panel {
+    padding: 14px;
+    border-left: 0;
+    border-top: 1px solid var(--border);
+  }
+
+  .crop-settings .panel-title {
+    margin-bottom: 8px;
+  }
+
+  .crop-fields {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 8px;
+    margin-bottom: 8px;
+  }
+
+  .crop-help {
+    margin-bottom: 8px;
+    line-height: 1.5;
+  }
+
+  .empty-state {
+    padding: 12px;
+  }
+
+  .empty-card {
+    width: 100%;
+    max-height: 100%;
+    overflow: auto;
+    padding: 20px;
+  }
+
+  .empty-card h1 {
+    font-size: 18px;
+  }
+
+  .statusbar {
+    gap: 8px;
+    padding-inline: 8px;
+  }
+
+  .toast {
+    right: 12px;
+    left: 12px;
+    bottom: 42px;
+  }
+}
+
+@media (max-width: 760px) and (max-height: 500px) {
+  html,
+  body,
+  #app {
+    height: auto;
+    min-height: 100%;
+    overflow: auto;
+  }
+
+  .app-shell {
+    height: auto;
+    min-height: 100dvh;
+    grid-template-rows: auto auto minmax(220px, 50dvh) auto 32px;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {
